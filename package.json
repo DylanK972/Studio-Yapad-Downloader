@@ -1,0 +1,25 @@
+{
+  "name": "studio-yapad-downloader",
+  "version": "1.0.0",
+  "description": "Outil interne Studio Yapad pour télécharger les médias Instagram et TikTok (API-free).",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2",
+    "path": "^0.12.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "Dylan K972 - Studio Yapad",
+  "license": "MIT"
+}
