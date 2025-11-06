@@ -1,15 +1,21 @@
+// 🔥 Studio Yapad Downloader v3 (Multi-Downloader 4K)
+// - Compatible Instagram & TikTok
+// - Hébergement 100% Deno Deploy
+// - Pas besoin de clé API
+// - Gère les reels, posts, et vidéos TikTok
+// - Format de sortie propre, avec timestamp & source
+
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
 const headers = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
+  "Content-Type": "application/json",
 };
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers });
 
   const { searchParams } = new URL(req.url);
   const link = searchParams.get("url");
@@ -22,72 +28,87 @@ serve(async (req) => {
   }
 
   try {
-    const html = await fetch(link, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-      },
-    }).then((r) => r.text());
+    let apiUrl = "";
+    let type = "";
 
-    // Tentative 1 : JSON-LD (structure standard Instagram)
-    const ldMatch = html.match(
-      /<script type="application\/ld\+json">(.*?)<\/script>/s,
-    );
-    if (ldMatch) {
-      const data = JSON.parse(ldMatch[1]);
-      const media = data.video || data.image || null;
-      if (media) {
-        return new Response(
-          JSON.stringify({ media: [media], type: data["@type"] }),
-          { headers, status: 200 },
-        );
-      }
-    }
-
-    // Tentative 2 : GraphQL (structure moderne)
-    const graphqlMatch = html.match(/"graphql":({.*?}),"hostname":/s);
-    if (graphqlMatch) {
-      const graphql = JSON.parse(graphqlMatch[1]);
-      const media = graphql.shortcode_media;
-      const urls: string[] = [];
-
-      if (media.edge_sidecar_to_children) {
-        for (const node of media.edge_sidecar_to_children.edges) {
-          urls.push(
-            node.node.is_video ? node.node.video_url : node.node.display_url,
-          );
-        }
-      } else {
-        urls.push(media.is_video ? media.video_url : media.display_url);
-      }
-
-      if (urls.length > 0) {
-        return new Response(JSON.stringify({ media: urls }), {
-          headers,
-          status: 200,
-        });
-      }
-    }
-
-    // Tentative 3 : structure embed (pour les reels ou posts privés)
-    const embedMatch = html.match(/"contentUrl":"(https:[^"]+)"/);
-    if (embedMatch) {
-      return new Response(JSON.stringify({ media: [embedMatch[1]] }), {
+    // 🌐 Détection automatique de la plateforme
+    if (link.includes("instagram.com")) {
+      type = "instagram";
+      apiUrl = `https://api.instasupersave.com/`;
+    } else if (link.includes("tiktok.com")) {
+      type = "tiktok";
+      apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(link)}`;
+    } else {
+      return new Response(JSON.stringify({ error: "Plateforme non reconnue." }), {
         headers,
-        status: 200,
+        status: 400,
       });
     }
 
-    // Aucun résultat trouvé
-    console.log("⚠️ Aucun média trouvé pour", link);
-    return new Response(JSON.stringify({ error: "Aucun média trouvé dans la page." }), {
-      headers,
-      status: 404,
-    });
-  } catch (err) {
-    console.error("❌ Erreur serveur:", err);
+    // 🚀 Appel à l'API publique correspondante
+    const response = await fetch(
+      type === "instagram"
+        ? `${apiUrl}?url=${encodeURIComponent(link)}`
+        : apiUrl,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+          "Accept": "application/json",
+        },
+      },
+    );
+
+    const data = await response.json();
+
+    // 🎯 Parsing des résultats
+    let mediaUrls: string[] = [];
+    let author = "";
+    let caption = "";
+
+    if (type === "instagram") {
+      // Pour Instasupersave : structure { media: [url], type, caption }
+      if (data && data.media) {
+        mediaUrls = Array.isArray(data.media) ? data.media : [data.media];
+        author = data.author || "";
+        caption = data.caption || "";
+      }
+    } else if (type === "tiktok") {
+      // Pour TikWM : structure { data: { play, music, ... } }
+      if (data.data) {
+        mediaUrls.push(data.data.play || data.data.play_addr);
+        author = data.data.author?.unique_id || "";
+        caption = data.data.title || "";
+      }
+    }
+
+    // ⚠️ Aucun média trouvé
+    if (!mediaUrls.length) {
+      return new Response(
+        JSON.stringify({ error: "Aucun média détecté sur cette URL." }),
+        { headers, status: 404 },
+      );
+    }
+
+    // ✅ Réponse finale propre
     return new Response(
-      JSON.stringify({ error: "Erreur interne Deno.", details: String(err) }),
+      JSON.stringify({
+        source: "YapadProxy-v3",
+        platform: type,
+        author,
+        caption,
+        media: mediaUrls,
+        timestamp: new Date().toISOString(),
+      }),
+      { headers, status: 200 },
+    );
+  } catch (err) {
+    console.error("Erreur:", err);
+    return new Response(
+      JSON.stringify({
+        error: "Erreur interne sur YapadProxy.",
+        details: String(err),
+      }),
       { headers, status: 500 },
     );
   }
