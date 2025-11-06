@@ -7,9 +7,7 @@ const headers = {
 };
 
 serve(async (req) => {
-  const { method, url } = req;
-
-  if (method === "OPTIONS") {
+  if (req.method === "OPTIONS") {
     return new Response("ok", { headers });
   }
 
@@ -31,39 +29,49 @@ serve(async (req) => {
       },
     }).then((r) => r.text());
 
-    const match = html.match(/window\._sharedData\s*=\s*(\{.*?\});<\/script>/);
-    if (!match) {
-      return new Response(JSON.stringify({ error: "Données non trouvées" }), {
-        headers,
-        status: 404,
-      });
+    // 1️⃣ Vérifie la nouvelle structure Instagram (__additionalDataLoaded)
+    const newJsonMatch = html.match(/window\.__additionalDataLoaded\('extra',({.*})\);<\/script>/);
+    if (newJsonMatch) {
+      const data = JSON.parse(newJsonMatch[1]);
+      const media = data?.graphql?.shortcode_media;
+      if (media) {
+        const url = media.is_video
+          ? media.video_url
+          : media.display_resources?.pop()?.src;
+        return new Response(JSON.stringify({ media: url }), {
+          headers,
+          status: 200,
+        });
+      }
     }
 
-    const data = JSON.parse(match[1]);
-    const media =
-      data.entry_data?.PostPage?.[0]?.graphql?.shortcode_media ||
-      data.entry_data?.ReelPage?.[0]?.graphql?.shortcode_media;
+    // 2️⃣ Fallback ancienne structure (_sharedData)
+    const oldJsonMatch = html.match(/window\._sharedData\s*=\s*(\{.*?\});<\/script>/);
+    if (oldJsonMatch) {
+      const data = JSON.parse(oldJsonMatch[1]);
+      const media =
+        data.entry_data?.PostPage?.[0]?.graphql?.shortcode_media ||
+        data.entry_data?.ReelPage?.[0]?.graphql?.shortcode_media;
+      if (media) {
+        const url = media.is_video
+          ? media.video_url
+          : media.display_resources?.pop()?.src;
+        return new Response(JSON.stringify({ media: url }), {
+          headers,
+          status: 200,
+        });
+      }
+    }
 
-    if (!media)
-      return new Response(JSON.stringify({ error: "Aucun média trouvé" }), {
-        headers,
-        status: 404,
-      });
-
-    const mediaUrl = media.is_video
-      ? media.video_url
-      : media.display_resources?.pop()?.src;
-
-    return new Response(JSON.stringify({ media: mediaUrl }), {
-      headers: {
-        ...headers,
-        "Content-Type": "application/json",
-      },
+    // 3️⃣ Aucun JSON trouvé
+    return new Response(JSON.stringify({ error: "Aucun média trouvé dans la page." }), {
+      headers,
+      status: 404,
     });
   } catch (err) {
     console.error(err);
     return new Response(
-      JSON.stringify({ error: "Erreur interne serveur" }),
+      JSON.stringify({ error: "Erreur serveur côté Deno." }),
       { headers, status: 500 },
     );
   }
