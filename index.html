@@ -7,36 +7,24 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="wrapper">
-    <h1>Studio Yapad Downloader</h1>
-    <p class="subtitle">Télécharge en 4K les médias depuis Instagram 📸 et TikTok 🎥 – outil interne équipe Yapad</p>
+  <h1>Studio Yapad Downloader</h1>
+  <p class="subtitle">Télécharge en 4K les médias depuis Instagram 📸 et TikTok 🎥</p>
 
-    <div class="cards">
-      <!-- Instagram -->
-      <div class="card glass" id="instaCard">
-        <div class="icon">
-          <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/instagram/instagram-original.svg" alt="Instagram" />
-        </div>
-        <h2>Instagram</h2>
-        <p>Colle le lien d’un post, reel ou story :</p>
-        <input id="instaUrl" type="text" placeholder="https://www.instagram.com/p/..." />
-        <button onclick="downloadInstagram()">Télécharger</button>
-        <div class="progress hidden" id="instaProgress"><span></span></div>
-        <div id="instaResult" class="result"></div>
-      </div>
+  <div class="container">
+    <div class="card">
+      <img src="https://cdn-icons-png.flaticon.com/512/174/174855.png" class="icon" />
+      <h2>Instagram</h2>
+      <input id="insta" placeholder="https://www.instagram.com/reel/.../" />
+      <button onclick="download('insta')">Télécharger</button>
+      <div id="insta-result" class="result"></div>
+    </div>
 
-      <!-- TikTok -->
-      <div class="card glass" id="tiktokCard">
-        <div class="icon">
-          <img src="https://cdn-icons-png.flaticon.com/512/3046/3046129.png" alt="TikTok" />
-        </div>
-        <h2>TikTok</h2>
-        <p>Colle le lien d’une vidéo TikTok :</p>
-        <input id="tiktokUrl" type="text" placeholder="https://www.tiktok.com/@..." />
-        <button onclick="downloadTikTok()">Télécharger</button>
-        <div class="progress hidden" id="tiktokProgress"><span></span></div>
-        <div id="tiktokResult" class="result"></div>
-      </div>
+    <div class="card">
+      <img src="https://cdn-icons-png.flaticon.com/512/3046/3046125.png" class="icon" />
+      <h2>TikTok</h2>
+      <input id="tiktok" placeholder="https://www.tiktok.com/@.../video/..." />
+      <button onclick="download('tiktok')">Télécharger</button>
+      <div id="tiktok-result" class="result"></div>
     </div>
   </div>
 
