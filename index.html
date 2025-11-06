@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Studio Yapad Downloader</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="wrapper">
+    <h1>Studio Yapad Downloader</h1>
+    <p class="subtitle">Télécharge en 4K les médias depuis Instagram 📸 et TikTok 🎥 – outil interne équipe Yapad</p>
+
+    <div class="cards">
+      <!-- Instagram -->
+      <div class="card glass" id="instaCard">
+        <div class="icon">
+          <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/instagram/instagram-original.svg" alt="Instagram" />
+        </div>
+        <h2>Instagram</h2>
+        <p>Colle le lien d’un post, reel ou story :</p>
+        <input id="instaUrl" type="text" placeholder="https://www.instagram.com/p/..." />
+        <button onclick="downloadInstagram()">Télécharger</button>
+        <div class="progress hidden" id="instaProgress"><span></span></div>
+        <div id="instaResult" class="result"></div>
+      </div>
+
+      <!-- TikTok -->
+      <div class="card glass" id="tiktokCard">
+        <div class="icon">
+          <img src="https://cdn-icons-png.flaticon.com/512/3046/3046129.png" alt="TikTok" />
+        </div>
+        <h2>TikTok</h2>
+        <p>Colle le lien d’une vidéo TikTok :</p>
+        <input id="tiktokUrl" type="text" placeholder="https://www.tiktok.com/@..." />
+        <button onclick="downloadTikTok()">Télécharger</button>
+        <div class="progress hidden" id="tiktokProgress"><span></span></div>
+        <div id="tiktokResult" class="result"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
