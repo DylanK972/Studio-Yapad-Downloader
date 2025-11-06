@@ -1,6 +1,7 @@
-// Studio Yapad Downloader v4 - 100% Deno Deploy compatible
-// 🔥 Instagram & TikTok downloader via proxys fiables
+// Studio Yapad Downloader v4.1 — frontend + backend dans un seul Deno Deploy
+// Sert automatiquement index.html + gère API TikTok/Instagram
 
+import { serveFile } from "https://deno.land/std@0.224.0/http/file_server.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
 const headers = {
@@ -11,21 +12,32 @@ const headers = {
 };
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers });
-  const { searchParams } = new URL(req.url);
-  const url = searchParams.get("url");
+  const url = new URL(req.url);
 
-  if (!url) {
-    return new Response(JSON.stringify({ error: "Lien manquant." }), { headers });
+  // 🧭 1. Si aucune query → renvoie le site (index.html)
+  if (!url.searchParams.get("url") && !url.pathname.includes("/api")) {
+    try {
+      return await serveFile(req, "index.html");
+    } catch {
+      return new Response("index.html manquant", { status: 404 });
+    }
   }
+
+  // ✅ 2. OPTIONS (CORS)
+  if (req.method === "OPTIONS") return new Response("ok", { headers });
+
+  // 🧩 3. Route API : /?url=...
+  const link = url.searchParams.get("url");
+  if (!link)
+    return new Response(JSON.stringify({ error: "Lien manquant" }), { headers });
 
   try {
     let response, data;
 
-    // 🟣 Instagram via snapinsta.app (proxy fiable)
-    if (url.includes("instagram.com")) {
+    // ⚡ Instagram via snapsave.io proxy
+    if (link.includes("instagram.com")) {
       const proxy = "https://snapsave.io/api/ajaxSearch";
-      const body = new URLSearchParams({ q: url, lang: "en" });
+      const body = new URLSearchParams({ q: link, lang: "en" });
       response = await fetch(proxy, {
         method: "POST",
         headers: {
@@ -44,12 +56,12 @@ serve(async (req) => {
       );
     }
 
-    // 🔴 TikTok via tikwm API
-    else if (url.includes("tiktok.com")) {
+    // ⚡ TikTok via tikwm.com
+    if (link.includes("tiktok.com")) {
       response = await fetch("https://www.tikwm.com/api/", {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ url }),
+        body: new URLSearchParams({ url: link }),
       });
       data = await response.json();
       if (!data.data || !data.data.play) throw new Error("Aucun média TikTok trouvé.");
@@ -66,8 +78,8 @@ serve(async (req) => {
       );
     }
 
-    return new Response(JSON.stringify({ error: "Lien non supporté." }), { headers });
+    return new Response(JSON.stringify({ error: "Lien non supporté" }), { headers });
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), { headers, status: 500 });
+    return new Response(JSON.stringify({ error: err.message }), { headers });
   }
 });
