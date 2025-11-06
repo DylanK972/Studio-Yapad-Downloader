@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-// update
+
 const headers = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
@@ -29,51 +29,66 @@ serve(async (req) => {
       },
     }).then((r) => r.text());
 
-    // 1️⃣ Vérifie la nouvelle structure Instagram (__additionalDataLoaded)
-    const newJsonMatch = html.match(/window\.__additionalDataLoaded\('extra',({.*})\);<\/script>/);
-    if (newJsonMatch) {
-      const data = JSON.parse(newJsonMatch[1]);
-      const media = data?.graphql?.shortcode_media;
+    // Tentative 1 : JSON-LD (structure standard Instagram)
+    const ldMatch = html.match(
+      /<script type="application\/ld\+json">(.*?)<\/script>/s,
+    );
+    if (ldMatch) {
+      const data = JSON.parse(ldMatch[1]);
+      const media = data.video || data.image || null;
       if (media) {
-        const url = media.is_video
-          ? media.video_url
-          : media.display_resources?.pop()?.src;
-        return new Response(JSON.stringify({ media: url }), {
+        return new Response(
+          JSON.stringify({ media: [media], type: data["@type"] }),
+          { headers, status: 200 },
+        );
+      }
+    }
+
+    // Tentative 2 : GraphQL (structure moderne)
+    const graphqlMatch = html.match(/"graphql":({.*?}),"hostname":/s);
+    if (graphqlMatch) {
+      const graphql = JSON.parse(graphqlMatch[1]);
+      const media = graphql.shortcode_media;
+      const urls: string[] = [];
+
+      if (media.edge_sidecar_to_children) {
+        for (const node of media.edge_sidecar_to_children.edges) {
+          urls.push(
+            node.node.is_video ? node.node.video_url : node.node.display_url,
+          );
+        }
+      } else {
+        urls.push(media.is_video ? media.video_url : media.display_url);
+      }
+
+      if (urls.length > 0) {
+        return new Response(JSON.stringify({ media: urls }), {
           headers,
           status: 200,
         });
       }
     }
 
-    // 2️⃣ Fallback ancienne structure (_sharedData)
-    const oldJsonMatch = html.match(/window\._sharedData\s*=\s*(\{.*?\});<\/script>/);
-    if (oldJsonMatch) {
-      const data = JSON.parse(oldJsonMatch[1]);
-      const media =
-        data.entry_data?.PostPage?.[0]?.graphql?.shortcode_media ||
-        data.entry_data?.ReelPage?.[0]?.graphql?.shortcode_media;
-      if (media) {
-        const url = media.is_video
-          ? media.video_url
-          : media.display_resources?.pop()?.src;
-        return new Response(JSON.stringify({ media: url }), {
-          headers,
-          status: 200,
-        });
-      }
+    // Tentative 3 : structure embed (pour les reels ou posts privés)
+    const embedMatch = html.match(/"contentUrl":"(https:[^"]+)"/);
+    if (embedMatch) {
+      return new Response(JSON.stringify({ media: [embedMatch[1]] }), {
+        headers,
+        status: 200,
+      });
     }
 
-    // 3️⃣ Aucun JSON trouvé
+    // Aucun résultat trouvé
+    console.log("⚠️ Aucun média trouvé pour", link);
     return new Response(JSON.stringify({ error: "Aucun média trouvé dans la page." }), {
       headers,
       status: 404,
     });
   } catch (err) {
-    console.error(err);
+    console.error("❌ Erreur serveur:", err);
     return new Response(
-      JSON.stringify({ error: "Erreur serveur côté Deno." }),
+      JSON.stringify({ error: "Erreur interne Deno.", details: String(err) }),
       { headers, status: 500 },
     );
   }
 });
-
