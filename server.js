@@ -7,56 +7,75 @@ import { fileURLToPath } from "url";
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Fix pour __dirname avec ES modules
+// Fix pour __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Middleware
 app.use(cors());
 app.use(express.json());
-
-// 🔹 Sert les fichiers du frontend (index.html, style.css, script.js)
 app.use(express.static(__dirname));
 
-// Route principale -> envoie index.html
+// Serve l’interface principale
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// ✅ Exemple route TikTok API-free via sssTik (juste pour tester)
-app.get("/api/tiktok", async (req, res) => {
-  const { url } = req.query;
-  if (!url) return res.status(400).json({ error: "URL TikTok manquante" });
 
-  try {
-    const apiURL = `https://ssstik.io/abc?url=${encodeURIComponent(url)}`;
-    const response = await fetch(apiURL);
-    const html = await response.text();
-    res.send(html);
-  } catch (err) {
-    res.status(500).json({ error: "Erreur TikTok fetch", details: err.message });
-  }
-});
+// =============== 🔹 FONCTION UTILITAIRE DE PROXY 🔹 ===============
+async function proxyFetch(targetUrl) {
+  const proxy = "https://api.allorigins.win/get?url=";
+  const proxied = proxy + encodeURIComponent(targetUrl);
 
-// ✅ Exemple route Instagram API-free via Snapinsta
+  const res = await fetch(proxied);
+  const data = await res.json();
+
+  return data.contents; // le HTML réel renvoyé par le site
+}
+
+
+// =============== 🔹 ROUTE INSTAGRAM 🔹 ===============
 app.get("/api/instagram", async (req, res) => {
   const { url } = req.query;
-  if (!url) return res.status(400).json({ error: "URL Instagram manquante" });
+  if (!url) return res.status(400).json({ error: "URL manquante" });
 
   try {
-    const response = await fetch("https://snapinsta.app/action.php", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: `url=${encodeURIComponent(url)}`,
-    });
-    const html = await response.text();
-    res.send(html);
+    // Snapinsta est notre cible (analyse du HTML par la suite si besoin)
+    const target = `https://snapinsta.app/action.php`;
+    const responseHtml = await proxyFetch(`${target}?url=${encodeURIComponent(url)}`);
+
+    if (!responseHtml || responseHtml.length < 200)
+      return res.status(400).json({ error: "Aucun média trouvé ou réponse vide." });
+
+    res.send(responseHtml);
   } catch (err) {
-    res.status(500).json({ error: "Erreur Instagram fetch", details: err.message });
+    console.error("Erreur Instagram:", err);
+    res.status(500).json({ error: "Erreur interne (Instagram)", details: err.message });
   }
 });
 
-// Lancement serveur
+
+// =============== 🔹 ROUTE TIKTOK 🔹 ===============
+app.get("/api/tiktok", async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: "URL manquante" });
+
+  try {
+    const target = `https://ssstik.io/abc?url=${encodeURIComponent(url)}`;
+    const responseHtml = await proxyFetch(target);
+
+    if (!responseHtml || responseHtml.length < 200)
+      return res.status(400).json({ error: "Aucun média trouvé ou réponse vide." });
+
+    res.send(responseHtml);
+  } catch (err) {
+    console.error("Erreur TikTok:", err);
+    res.status(500).json({ error: "Erreur interne (TikTok)", details: err.message });
+  }
+});
+
+
+// =============== 🔹 LANCEMENT SERVEUR 🔹 ===============
 app.listen(PORT, () => {
-  console.log(`✅ Backend Studio Yapad actif sur port ${PORT}`);
+  console.log(`✅ Studio Yapad Downloader prêt sur le port ${PORT}`);
 });
