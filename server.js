@@ -1,4 +1,4 @@
-// server.js
+// server.js — Studio Yapad Downloader v8.5
 import express from "express";
 import cors from "cors";
 import path from "path";
@@ -12,26 +12,21 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static files (index.html, style.css, script.js)
-// place index.html, style.css, script.js at project root or in a /public folder.
-// Here we serve the repository root and a "public" fallback.
+// === Serve frontend files ===
 app.use(express.static(path.join(__dirname)));
 app.use(express.static(path.join(__dirname, "public")));
 
-// Utility: unique push
-const pushUnique = (arr, v) => {
-  if (!v) return;
-  if (!arr.includes(v)) arr.push(v);
+// === Utils ===
+const pushUnique = (arr, val) => {
+  if (val && !arr.includes(val)) arr.push(val);
 };
 
 // === /api/instagram ===
-// Try several heuristics to extract media URLs from Instagram page HTML
 app.get("/api/instagram", async (req, res) => {
   const url = req.query.url;
-  if (!url) return res.status(400).json({ error: "Missing url" });
+  if (!url) return res.status(400).json({ ok: false, error: "Missing URL" });
 
   try {
-    // fetch page with a common UA to avoid lightweight bot blocks
     const r = await fetch(url, {
       headers: {
         "User-Agent":
@@ -41,163 +36,106 @@ app.get("/api/instagram", async (req, res) => {
     });
 
     if (!r.ok) {
-      return res.status(500).json({ error: `Instagram fetch failed: ${r.status}` });
+      return res.status(500).json({ ok: false, error: "Fetch failed: " + r.status });
     }
-    const text = await r.text();
 
+    const html = await r.text();
     const medias = [];
 
-    // 1) og:video / og:image meta tags
-    {
-      const ogVideoRegex = /<meta[^>]*property=["']og:video["'][^>]*content=["']([^"']+)["'][^>]*>/gi;
-      const ogImageRegex = /<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["'][^>]*>/gi;
-      let m;
-      while ((m = ogVideoRegex.exec(text)) !== null) pushUnique(medias, m[1]);
-      while ((m = ogImageRegex.exec(text)) !== null) pushUnique(medias, m[1]);
-    }
+    // 1️⃣ og:video / og:image
+    const ogMeta = [...html.matchAll(/<meta[^>]+property="og:(video|image)"[^>]+content="([^"]+)"/gi)];
+    ogMeta.forEach((m) => pushUnique(medias, m[2]));
 
-    // 2) look for JSON embedded (window._sharedData or application/ld+json)
-    // a) application/ld+json
-    {
-      const ldRegex = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-      let m;
-      while ((m = ldRegex.exec(text)) !== null) {
-        try {
-          const j = JSON.parse(m[1]);
-          // images
-          if (j && j.image) {
-            if (typeof j.image === "string") pushUnique(medias, j.image);
-            if (Array.isArray(j.image)) j.image.forEach((u) => pushUnique(medias, u));
-          }
-          // potential video url
-          if (j && j.video && j.video.contentUrl) pushUnique(medias, j.video.contentUrl);
-          if (j && j.contentUrl) pushUnique(medias, j.contentUrl);
-        } catch (e) {
-          // ignore parse errors
+    // 2️⃣ JSON dans <script type="application/ld+json">
+    const ldBlocks = [...html.matchAll(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi)];
+    ldBlocks.forEach((b) => {
+      try {
+        const j = JSON.parse(b[1]);
+        if (j.image) {
+          if (typeof j.image === "string") pushUnique(medias, j.image);
+          else if (Array.isArray(j.image)) j.image.forEach((i) => pushUnique(medias, i));
         }
-      }
+        if (j.video && j.video.contentUrl) pushUnique(medias, j.video.contentUrl);
+      } catch (e) {}
+    });
+
+    // 3️⃣ Chercher les "display_url" / "video_url" / "thumbnail_src"
+    const urlRegex =
+      /"display_url"\s*:\s*"([^"]+)"|"video_url"\s*:\s*"([^"]+)"|"thumbnail_src"\s*:\s*"([^"]+)"/gi;
+    let match;
+    while ((match = urlRegex.exec(html))) {
+      const link = match[1] || match[2] || match[3];
+      if (link) pushUnique(medias, link.replace(/\\u0026/g, "&").replace(/\\\//g, "/"));
     }
 
-    // b) window._sharedData or legacy JSON
-    {
-      const sharedRegex = /window\._sharedData\s*=\s*({[\s\S]*?});/;
-      const match = text.match(sharedRegex);
-      if (match && match[1]) {
-        try {
-          const data = JSON.parse(match[1]);
-          // navigate common shapes to find display_url / video_url / resources
-          const ig = JSON.stringify(data);
-          // match urls inside JSON quickly
-          const urlRegex = /"(https?:\/\/[^"]+\.(?:mp4|jpg|jpeg|png|webp)[^"]*)"/gi;
-          let mm;
-          while ((mm = urlRegex.exec(ig)) !== null) {
-            pushUnique(medias, mm[1]);
-          }
-        } catch (e) {
-          // ignore
-        }
-      }
+    // 4️⃣ Fallback : tous les .mp4 / .jpg / .webp du HTML
+    const fallbackRegex = /(https?:\/\/[^"' ]+\.(?:mp4|jpg|jpeg|png|webp)[^"' ]*)/gi;
+    let f;
+    while ((f = fallbackRegex.exec(html))) pushUnique(medias, f[1]);
+
+    // Nettoyage final
+    const clean = medias
+      .map((u) => u.replace(/\\u0026/g, "&").replace(/\\\//g, "/"))
+      .filter((u) => !u.includes("rsrc.php") && u.startsWith("http"));
+
+    if (clean.length === 0) {
+      return res.json({ ok: false, count: 0, medias: [], message: "Aucun média détecté." });
     }
 
-    // 3) common "display_url", "video_url", "thumbnail_src" patterns
-    {
-      const patterns = [
-        /"display_url"\s*:\s*"([^"]+)"/gi,
-        /"video_url"\s*:\s*"([^"]+)"/gi,
-        /"thumbnail_src"\s*:\s*"([^"]+)"/gi,
-        /"display_src"\s*:\s*"([^"]+)"/gi,
-        /"url"\s*:\s*"([^"]+\.mp4[^"]*)"/gi,
-      ];
-      for (const p of patterns) {
-        let mm;
-        while ((mm = p.exec(text)) !== null) pushUnique(medias, mm[1].replace(/\\u0026/g, "&").replace(/\\\//g, "/"));
-      }
-    }
-
-    // 4) fallback: any direct .mp4/.jpg/.webp in HTML
-    {
-      const anyRegex = /(https?:\/\/[^"' ]+\.(?:mp4|jpg|jpeg|png|webp)[^"' ]*)/gi;
-      let mm;
-      while ((mm = anyRegex.exec(text)) !== null) pushUnique(medias, mm[1]);
-    }
-
-    // Normalize (some urls come escaped)
-    const normalized = medias
-      .map((u) => (u ? u.replace(/\\u0026/g, "&").replace(/\\\//g, "/") : u))
-      .filter(Boolean);
-
-    if (normalized.length === 0) {
-      return res.json({ ok: false, count: 0, medias: [], message: "Aucun média trouvé dans la page." });
-    }
-
-    return res.json({ ok: true, count: normalized.length, medias: normalized });
+    return res.json({ ok: true, count: clean.length, medias: clean });
   } catch (err) {
+    console.error("Erreur Instagram:", err);
     return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
 // === /proxy ===
-// Streams the remote URL through our domain, sets Content-Disposition for download
 app.get("/proxy", async (req, res) => {
   const { url, name } = req.query;
   if (!url) return res.status(400).send("Missing URL");
+  if (url.includes("rsrc.php") || !url.startsWith("http")) {
+    return res.status(400).send("Lien invalide ou non téléchargeable.");
+  }
 
   try {
-    const remote = await fetch(url, {
+    const response = await fetch(url, {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
         Accept: "*/*",
+        Referer: "https://www.instagram.com/",
       },
     });
 
-    if (!remote.ok) {
-      return res.status(502).send(`Remote fetch failed: ${remote.status}`);
+    if (!response.ok) {
+      return res.status(502).send("Erreur de récupération du média (" + response.status + ")");
     }
 
-    // content-type and extension detection
-    const ct = remote.headers.get("content-type") || "application/octet-stream";
-    let ext = "bin";
-    if (ct.includes("mp4")) ext = "mp4";
-    else if (ct.includes("jpeg") || ct.includes("jpg")) ext = "jpg";
-    else if (ct.includes("png")) ext = "png";
-    else if (ct.includes("webp")) ext = "webp";
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
 
-    const filename = (name ? name.replace(/[^a-zA-Z0-9_\-\.]/g, "_") : "media") + "." + ext;
+    const contentType = response.headers.get("content-type") || "application/octet-stream";
+    const ext =
+      contentType.includes("mp4") ? "mp4" :
+      contentType.includes("jpeg") ? "jpg" :
+      contentType.includes("png") ? "png" :
+      contentType.includes("webp") ? "webp" :
+      "bin";
 
-    res.setHeader("Content-Type", ct);
+    const filename = (name || "media") + "." + ext;
+
+    res.setHeader("Content-Type", contentType);
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-
-    // stream
-    const body = remote.body;
-    if (body && typeof body.pipe === "function") {
-      body.pipe(res);
-    } else {
-      // Node's WHATWG stream
-      const reader = body.getReader();
-      const stream = new ReadableStream({
-        async pull(controller) {
-          const { done, value } = await reader.read();
-          if (done) {
-            controller.close();
-            return;
-          }
-          controller.enqueue(value);
-        },
-      });
-      const nodeStream = stream.pipeTo; // fallback - but most env provide .pipe
-      // fallback simple: buffer everything (rare)
-      const buf = Buffer.from(await remote.arrayBuffer());
-      res.end(buf);
-    }
+    res.end(buffer);
   } catch (err) {
-    res.status(500).send("Proxy error: " + err.message);
+    console.error("Proxy error:", err);
+    res.status(500).send("Erreur proxy : " + err.message);
   }
 });
 
-// health
+// === Health ===
 app.get("/_health", (req, res) => res.send("ok"));
 
-// start
+// === Start server ===
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`✅ Backend Studio Yapad actif sur port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Studio Yapad Downloader en ligne sur le port ${PORT}`));
