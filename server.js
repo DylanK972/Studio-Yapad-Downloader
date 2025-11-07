@@ -236,6 +236,14 @@ app.get("/", (req, res) => {
   res.send("Backend Studio Yapad actif (API: /api/instagram ?url=...)");
 });
 
+import path from "path";
+import { fileURLToPath } from "url";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Sert tes fichiers du front à la racine
+app.use(express.static(__dirname));
+
 app.listen(PORT, () => {
   console.log(`✅ Backend Studio Yapad actif sur port ${PORT}`);
 });
+
