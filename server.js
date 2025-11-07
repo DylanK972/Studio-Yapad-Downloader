@@ -1,343 +1,158 @@
 /**
- * server.js
- * Studio Yapad Downloader - backend
- *
- * - Serve static front (index.html, style.css, script.js)
- * - /api/instagram?url=...
- * - /api/tiktok?url=...
- *
- * Usage:
- *  - Set env vars (optional):
- *      RAPIDAPI_KEY, ZYLA_API_KEY
- *  - node server.js
- *
- * Notes:
- *  - This code uses global fetch (Node >=18). If you run older node, install node-fetch.
- *  - Some fallback endpoints may change in the wild; keep the 'PROVIDERS' list updated.
+ * Studio Yapad Downloader v10.0 - Ultimate Free Version
+ * Full-resilient Instagram & TikTok media extractor
+ * Dylan K972 / Nov 2025
  */
 
-const express = require("express");
-const path = require("path");
-const rateLimit = require("express-rate-limit");
+import express from "express";
+import rateLimit from "express-rate-limit";
+import path from "path";
+import { fileURLToPath } from "url";
+import fetch from "node-fetch";
+import { dirname } from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// quick rate limiter to avoid abuse
-const limiter = rateLimit({
-  windowMs: 30 * 1000, // 30s
-  max: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use(limiter);
+// === Rate limiting to avoid bans ===
+app.use(rateLimit({ windowMs: 30 * 1000, max: 25 }));
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.static(__dirname));
 
-// Serve static files from /public or root (adjust if your files at root)
-const STATIC_DIR = path.join(__dirname);
-app.use(express.static(STATIC_DIR, { extensions: ["html", "htm"] }));
+// === Helpers ===
+const HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+};
 
-// ---------- Helpers ----------
-const TIMEOUT_MS = 12_000;
+const timeout = (ms) => new Promise((_, r) => setTimeout(() => r(new Error("timeout")), ms));
 
-async function fetchWithTimeout(url, opts = {}) {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), TIMEOUT_MS);
+async function safeFetch(url, opt = {}) {
   try {
-    const res = await fetch(url, { ...opts, signal: controller.signal });
-    clearTimeout(id);
-    return res;
-  } catch (err) {
-    clearTimeout(id);
-    throw err;
-  }
-}
-
-async function proxyFetchText(url, opts = {}) {
-  // simple wrapper returning text body
-  const res = await fetchWithTimeout(url, opts);
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${res.statusText}`);
-  }
-  return await res.text();
-}
-
-function decodeEscapedUrl(u) {
-  if (!u) return u;
-  // some pages escape & as \u0026 or by encoding
-  let s = u.replace(/\\u0026/g, "&");
-  try {
-    s = decodeURIComponent(s);
+    const r = await Promise.race([fetch(url, { ...opt, headers: HEADERS }), timeout(15000)]);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.text();
   } catch (e) {
-    // ignore
+    console.log("❌ fetch fail:", url, e.message);
+    return null;
   }
-  // strip quotes
-  return s.replace(/^"+|"+$/g, "");
 }
 
-// ---------- Providers (fallback attempts) ----------
-// These are query builders. Some endpoints are public, some require keys.
-// Add more providers as you find them.
-const PROVIDERS = [
-  // SnapInsta simple public endpoints (can break anytime)
-  (targetUrl) =>
-    `https://snapinsta.app/api.php?url=${encodeURIComponent(targetUrl)}`,
-
-  (targetUrl) =>
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`, // generic CORS proxy
-
-  // SSSInstagram site scrapers (may rate-limit)
-  (targetUrl) =>
-    `https://sssinstagram.com/#!/${encodeURIComponent(targetUrl)}`,
-
-  // fastdl proxy (some offer direct /api endpoints) - example only
-  (targetUrl) =>
-    `https://fastdl.app/api/fetch?url=${encodeURIComponent(targetUrl)}`,
-
-  // ZylaLabs (needs API key, add via env ZYLA_API_KEY)
-  (targetUrl) =>
-    process.env.ZYLA_API_KEY
-      ? `https://zylalabs.com/api/7706/instagram+content+downloader+api/12503/download+all+content?url=${encodeURIComponent(
-          targetUrl
-        )}&key=${process.env.ZYLA_API_KEY}`
-      : null,
-
-  // RapidAPI TikTok example (only for tiktok endpoint), the key would be in RAPIDAPI_KEY
-  // We won't call it here for instagram, but included for reference in /api/tiktok.
-];
-
-// Helper to try provider list and return first non-empty HTML/text
-async function tryProviders(targetUrl) {
-  for (const builder of PROVIDERS) {
-    try {
-      const url = builder(targetUrl);
-      if (!url) continue;
-      // Some providers return JSON, some return HTML: we just fetch text
-      const txt = await proxyFetchText(url, {
-        headers: {
-          // some providers expect a referer or user-agent
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
-        },
-      });
-      if (txt && txt.length > 50) {
-        return { source: url, body: txt };
-      }
-    } catch (err) {
-      // console.debug("provider failed", err.message);
-      continue;
-    }
-  }
-  return null;
+function decode(u) {
+  return u?.replace(/\\u0026/g, "&").replace(/\\/g, "");
 }
 
-// ---------- Parsers ----------
+// === Parsers ===
+function parseInsta(html) {
+  if (!html) return [];
 
-function parseInstagramFromHTML(html) {
-  if (!html) return null;
-
-  // 1) Try window._sharedData pattern (old Instagram)
-  let m = html.match(/window\._sharedData\s*=\s*({.+?});\s*<\/script>/s);
-  if (!m) {
-    // sometimes different closing
-    m = html.match(/window\._sharedData\s*=\s*({.+?});\s*/s);
-  }
-  if (m && m[1]) {
+  // Modern JSON: window.__additionalDataLoaded
+  let m = html.match(/window\.__additionalDataLoaded\([^,]+,({.+})\);/s);
+  if (m) {
     try {
       const data = JSON.parse(m[1]);
-      // navigate to media
-      // check for entry_data -> PostPage
-      const post =
-        data.entry_data?.PostPage?.[0] ||
-        data.entry_data?.ProfilePage?.[0] ||
-        data.graphql?.shortcode_media ||
-        null;
-      const media = post?.graphql?.shortcode_media || post || null;
+      const media = data?.graphql?.shortcode_media;
       if (media) {
-        // If sidecar (multiple)
-        if (media.edge_sidecar_to_children?.edges) {
-          const medias = media.edge_sidecar_to_children.edges.map((e) => {
-            const n = e.node;
-            return n.is_video ? n.video_url : n.display_url;
-          });
-          return { type: "multiple", items: medias };
-        }
-        // single
-        if (media.is_video && media.video_url) return { type: "video", url: media.video_url };
-        if (media.display_url) return { type: "image", url: media.display_url };
+        if (media.edge_sidecar_to_children?.edges)
+          return media.edge_sidecar_to_children.edges.map((e) =>
+            e.node.is_video ? e.node.video_url : e.node.display_url
+          );
+        if (media.is_video && media.video_url) return [media.video_url];
+        if (media.display_url) return [media.display_url];
       }
-    } catch (e) {
-      // parse fail -> keep going
-    }
+    } catch {}
   }
 
-  // 2) Try JSON embedded in <script type="application/ld+json">
-  const ld = html.match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
-  if (ld && ld[1]) {
+  // Legacy _sharedData
+  m = html.match(/window\._sharedData\s*=\s*({.+});<\/script>/s);
+  if (m) {
     try {
-      const data = JSON.parse(ld[1]);
-      if (data && data.image) {
-        // might be array or string
-        if (Array.isArray(data.image)) return { type: "image", url: data.image[0] };
-        return { type: "image", url: data.image };
+      const data = JSON.parse(m[1]);
+      const post = data.entry_data?.PostPage?.[0]?.graphql?.shortcode_media;
+      if (post) {
+        if (post.edge_sidecar_to_children?.edges)
+          return post.edge_sidecar_to_children.edges.map((e) =>
+            e.node.is_video ? e.node.video_url : e.node.display_url
+          );
+        if (post.is_video && post.video_url) return [post.video_url];
+        if (post.display_url) return [post.display_url];
       }
-    } catch (e) {}
+    } catch {}
   }
 
-  // 3) Try finding "display_url" or "video_url" direct patterns
-  let dd = html.match(/"display_url":"([^"]+)"/);
-  if (dd && dd[1]) return { type: "image", url: decodeEscapedUrl(dd[1]) };
+  // Meta tags fallback
+  const og = html.match(/property="og:video" content="([^"]+)"/) || html.match(/property="og:image" content="([^"]+)"/);
+  if (og) return [decode(og[1])];
 
-  let vd = html.match(/"video_url":"([^"]+)"/);
-  if (vd && vd[1]) return { type: "video", url: decodeEscapedUrl(vd[1]) };
-
-  // 4) Try edge_sidecar items (older patterns)
-  const sidecarMatch = html.match(/"edge_sidecar_to_children":\s*{\s*"edges":\s*(\[[\s\S]*?\])\s*}/);
-  if (sidecarMatch && sidecarMatch[1]) {
-    try {
-      const arr = JSON.parse(sidecarMatch[1]);
-      const items = arr.map((it) =>
-        it.node.is_video ? decodeEscapedUrl(it.node.video_url) : decodeEscapedUrl(it.node.display_url)
-      );
-      return { type: "multiple", items };
-    } catch (e) {}
-  }
-
-  // 5) Generic fallback: first jpg/png/mp4 url in HTML
-  const generic = html.match(/https?:\/\/[^"'<> ]+\.(?:mp4|jpg|jpeg|png)(?:\?[^"'<> ]*)?/i);
-  if (generic) return { type: "generic", url: generic[0] };
-
-  return null;
+  // Final fallback: any .mp4/.jpg/.png in page
+  const generic = [...html.matchAll(/https?:\/\/[^"'<> ]+\.(?:mp4|jpg|jpeg|png)/gi)].map((m) => decode(m[0]));
+  return generic.slice(0, 5);
 }
 
-function parseTikTokFromHTML(html) {
-  if (!html) return null;
-
-  // 1) Try playAddr or downloadAddr in JSON
+function parseTikTok(html) {
+  if (!html) return [];
   const play = html.match(/"playAddr":"([^"]+)"/);
-  if (play && play[1]) return { type: "video", url: decodeEscapedUrl(play[1]) };
-
-  // 2) Try "downloadAddr"
+  if (play) return [decode(play[1])];
   const dl = html.match(/"downloadAddr":"([^"]+)"/);
-  if (dl && dl[1]) return { type: "video", url: decodeEscapedUrl(dl[1]) };
-
-  // 3) try application/ld+json
-  const ld = html.match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
-  if (ld && ld[1]) {
-    try {
-      const data = JSON.parse(ld[1]);
-      if (data && data.video && data.video.contentUrl) return { type: "video", url: data.video.contentUrl };
-    } catch (e) {}
-  }
-
-  // 4) generic mp4 match
-  const generic = html.match(/https?:\/\/[^"'<> ]+\.mp4(?:\?[^"'<> ]*)?/i);
-  if (generic) return { type: "video", url: generic[0] };
-
-  return null;
+  if (dl) return [decode(dl[1])];
+  const meta = html.match(/"contentUrl":"([^"]+)"/);
+  if (meta) return [decode(meta[1])];
+  const generic = html.match(/https?:\/\/[^"'<> ]+\.mp4/);
+  if (generic) return [decode(generic[0])];
+  return [];
 }
 
-// ---------- API routes ----------
+// === Instagram Extractor ===
+async function extractInstagram(url) {
+  const providers = [
+    url, // direct
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    `https://snapinsta.app/api.php?url=${encodeURIComponent(url)}`,
+    `https://www.sssinstagram.com/#${encodeURIComponent(url)}`,
+  ];
 
+  for (const p of providers) {
+    const html = await safeFetch(p);
+    const out = parseInsta(html);
+    if (out && out.length) return out;
+  }
+  return [];
+}
+
+// === TikTok Extractor ===
+async function extractTikTok(url) {
+  const html = await safeFetch(url);
+  return parseTikTok(html);
+}
+
+// === Routes ===
 app.get("/api/instagram", async (req, res) => {
   const { url } = req.query;
-  if (!url) return res.status(400).json({ error: "url param required" });
+  if (!url) return res.status(400).json({ error: "Missing URL" });
 
-  try {
-    // 1) Try providers / proxies
-    let result = null;
-    try {
-      const provRes = await tryProviders(url);
-      if (provRes && provRes.body) {
-        const parsed = parseInstagramFromHTML(provRes.body);
-        if (parsed) {
-          return res.json({ ok: true, source: provRes.source, parsed });
-        }
-      }
-    } catch (e) {
-      // ignore and go fallback
-    }
+  const result = await extractInstagram(url);
+  if (!result.length)
+    return res.status(404).json({ error: "⚠️ Aucun média détecté (toutes les sources ont échoué)." });
 
-    // 2) Fallback: fetch the Instagram page directly
-    // Some hosts block requests without browser headers
-    const headers = {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9",
-    };
-
-    let pageText;
-    try {
-      pageText = await proxyFetchText(url, { headers });
-    } catch (err) {
-      // If direct fetch fails, return provider error
-      return res.status(502).json({ error: "Failed to fetch page", details: err.message });
-    }
-
-    const parsed = parseInstagramFromHTML(pageText);
-    if (!parsed) {
-      return res.status(400).json({ error: "Aucun média trouvé ou format inattendu." });
-    }
-    return res.json({ ok: true, source: "direct", parsed });
-  } catch (err) {
-    console.error("API Instagram error:", err);
-    res.status(500).json({ error: "Internal error", details: err.message });
-  }
+  res.json({ ok: true, count: result.length, medias: result });
 });
 
 app.get("/api/tiktok", async (req, res) => {
   const { url } = req.query;
-  if (!url) return res.status(400).json({ error: "url param required" });
+  if (!url) return res.status(400).json({ error: "Missing URL" });
 
-  try {
-    // Try providers / direct fetch
-    // 1) Direct fetch page
-    const headers = {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    };
+  const result = await extractTikTok(url);
+  if (!result.length)
+    return res.status(404).json({ error: "⚠️ Aucun média détecté (toutes les sources ont échoué)." });
 
-    let pageText;
-    try {
-      pageText = await proxyFetchText(url, { headers });
-    } catch (err) {
-      // fallback to providers (if any)
-      try {
-        const provRes = await tryProviders(url);
-        if (provRes && provRes.body) pageText = provRes.body;
-      } catch (e) {}
-    }
-
-    if (!pageText) return res.status(502).json({ error: "Failed to fetch TikTok page" });
-
-    const parsed = parseTikTokFromHTML(pageText);
-    if (!parsed) return res.status(400).json({ error: "Aucun média détecté sur cette URL." });
-
-    // If url is playAddr with watermark token etc. we attempt to clean/resolve
-    return res.json({ ok: true, source: "direct", parsed });
-  } catch (err) {
-    console.error("API TikTok error:", err);
-    res.status(500).json({ error: "Internal error", details: err.message });
-  }
+  res.json({ ok: true, medias: result });
 });
 
-// test route
-app.get("/api/health", (req, res) => res.json({ ok: true, ts: Date.now() }));
+app.get("/", (_, res) => res.sendFile(path.join(__dirname, "index.html")));
 
-// fallback to index for SPA
-app.get("/", (req, res) => {
-  res.sendFile(path.join(STATIC_DIR, "index.html"));
-});
-
-// 404 fallback to index (let frontend route)
-app.use((req, res) => {
-  res.status(404).sendFile(path.join(STATIC_DIR, "index.html"));
-});
-
-app.listen(PORT, () => {
-  console.log(`✅ Backend Studio Yapad actif sur port ${PORT}`);
-  console.log(`✅ Open: http://localhost:${PORT} (or your host)`);
-});
+app.listen(PORT, () => console.log(`✅ Studio Yapad Downloader v10 running on port ${PORT}`));
