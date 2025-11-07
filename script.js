@@ -1,69 +1,77 @@
-// script.js - Studio Yapad Downloader (fallback version)
-async function downloadInstagram() {
-  const input = document.querySelector("input");
+// Studio Yapad Downloader — version corrigée et stable
+
+document.addEventListener("DOMContentLoaded", () => {
+  const button = document.getElementById("downloadBtn");
+  button.addEventListener("click", handleDownload);
+});
+
+async function handleDownload() {
+  const input = document.getElementById("instaURL");
   const url = input.value.trim();
   const result = document.getElementById("result");
   result.innerHTML = "";
-  if (!url) return (result.innerHTML = "⚠️ Veuillez coller un lien Instagram.");
 
-  const showError = (msg) => {
-    result.innerHTML = `<p style="color:#d33;">⚠️ ${msg}</p>`;
-  };
+  if (!url) {
+    result.innerHTML = `<p style="color:#d33;">⚠️ Veuillez coller un lien Instagram.</p>`;
+    return;
+  }
+
+  const showError = (msg) =>
+    (result.innerHTML = `<p style="color:#d33;">⚠️ ${msg}</p>`);
 
   try {
-    // 1️⃣ Tente via ton backend Render
-    const backendUrl = `/api/instagram?url=${encodeURIComponent(url)}`;
-    const r = await fetch(backendUrl);
-    const data = await r.json();
+    // 🧠 Étape 1 : appel à ton backend Render
+    const backend = `/api/instagram?url=${encodeURIComponent(url)}`;
+    const res = await fetch(backend);
+    const data = await res.json();
 
     if (data.ok && data.medias?.length) {
-      displayMedia(data.medias);
-      return;
+      return renderMedias(data.medias);
     }
 
-    // 2️⃣ Si backend bloqué, tente depuis le navigateur
-    console.warn("Serveur bloqué côté Render, fallback client lancé...");
+    console.warn("➡️ Backend bloqué — fallback client en cours...");
+
+    // 🧠 Étape 2 : fallback direct client (navigateur)
     const fallback = await fetch(
       `https://api.instagram.com/oembed/?url=${encodeURIComponent(url)}`
     );
     const text = await fallback.text();
 
-    // Si Instagram renvoie encore du HTML
     if (text.trim().startsWith("<")) {
-      return showError("⚠️ Instagram bloque aussi depuis le navigateur.");
+      return showError("⚠️ Instagram bloque également côté navigateur.");
     }
 
     const json = JSON.parse(text);
     if (json.thumbnail_url) {
-      displayMedia([json.thumbnail_url]);
+      renderMedias([json.thumbnail_url]);
     } else {
       showError("⚠️ Aucun média trouvé (format inattendu).");
     }
-  } catch (e) {
-    console.error(e);
-    showError("⚠️ Erreur : " + e.message);
+  } catch (err) {
+    console.error("Erreur:", err);
+    showError("Erreur: " + err.message);
   }
 }
 
-function displayMedia(medias) {
+function renderMedias(urls) {
   const result = document.getElementById("result");
   result.innerHTML = "";
 
-  medias.forEach((url) => {
-    const div = document.createElement("div");
-    div.className = "media-block";
-    div.innerHTML = `
-      <img src="${url}" alt="media" class="thumb">
+  urls.forEach((url) => {
+    const container = document.createElement("div");
+    container.className = "media-container";
+    container.innerHTML = `
+      <img src="${url}" alt="Média Instagram" class="media-preview">
       <div class="buttons">
-        <a href="${url}" target="_blank" class="dl-btn">⬇️ Télécharger</a>
-        <button onclick="navigator.clipboard.writeText('${url}')" class="copy-btn">Copier lien</button>
+        <a href="${url}" download class="dl-btn" target="_blank">⬇️ Télécharger</a>
+        <button class="copy-btn" onclick="copyLink('${url}')">Copier lien</button>
       </div>
     `;
-    result.appendChild(div);
+    result.appendChild(container);
   });
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  const btn = document.querySelector("button");
-  btn.addEventListener("click", downloadInstagram);
-});
+function copyLink(url) {
+  navigator.clipboard.writeText(url);
+  alert("Lien copié !");
+}
