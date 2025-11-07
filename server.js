@@ -14,84 +14,41 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 app.use(express.static(__dirname));
 
-/** 🔄 Proxy SaveIG (pas de Cloudflare) */
-async function proxyToSaveIG(instaUrl) {
-  const endpoint = "https://saveig.app/api/ajaxSearch";
-
-  const body = new URLSearchParams();
-  body.append("q", instaUrl);
-  body.append("t", "media");
-  body.append("lang", "fr");
-
-  const headers = {
-    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-    "Origin": "https://saveig.app",
-    "Referer": "https://saveig.app/fr",
-    "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-  };
-
-  try {
-    const r = await fetch(endpoint, { method: "POST", headers, body });
-    const contentType = r.headers.get("content-type") || "";
-
-    if (contentType.includes("application/json")) {
-      const j = await r.json();
-      // leur JSON contient souvent des liens dans j.data ou j.links
-      const html = j.data || j.html;
-      if (html) {
-        const dom = new JSDOM(html);
-        const links = Array.from(dom.window.document.querySelectorAll("a"))
-          .map((a) => a.href)
-          .filter((x) => x.includes("cdninstagram"));
-        return links;
-      }
-    }
-
-    return [];
-  } catch (e) {
-    console.error("SaveIG error:", e.message);
-    return [];
-  }
+/** 🧠 Téléchargement via proxy AllOrigins */
+async function fetchWithProxy(url) {
+  const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+  const res = await fetch(proxyUrl);
+  const json = await res.json();
+  return json.contents; // retourne le HTML original
 }
 
-/** 🧩 Fallback scraping direct si tout échoue */
-async function fallbackScrape(url) {
-  try {
-    const proxy = `https://r.jina.ai/http://${url.replace("https://", "")}`;
-    const res = await fetch(proxy, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
-    });
-    const html = await res.text();
-    const dom = new JSDOM(html);
-    const metas = dom.window.document.querySelectorAll("meta[property]");
-    const medias = [];
-    metas.forEach((m) => {
-      const p = m.getAttribute("property");
-      const c = m.getAttribute("content");
-      if (p === "og:image" || p === "og:video") medias.push(c);
-    });
-    return medias;
-  } catch {
-    return [];
-  }
+/** 🔍 Analyse la page pour trouver les liens médias */
+function extractMedias(html) {
+  const dom = new JSDOM(html);
+  const metas = dom.window.document.querySelectorAll("meta[property]");
+  const medias = [];
+  metas.forEach((m) => {
+    const prop = m.getAttribute("property");
+    const content = m.getAttribute("content");
+    if (prop === "og:image" || prop === "og:video") medias.push(content);
+  });
+  return medias;
 }
 
-/** 🪄 Route principale */
+/** Route principale Instagram */
 app.get("/api/instagram", async (req, res) => {
   const { url } = req.query;
   if (!url) return res.json({ ok: false, error: "Aucune URL fournie" });
 
   try {
-    const result = await proxyToSaveIG(url);
-    if (result.length) return res.json({ ok: true, medias: result });
+    const html = await fetchWithProxy(url);
+    const medias = extractMedias(html);
+    if (!medias.length)
+      return res.json({ ok: false, error: "Aucun média trouvé." });
 
-    const fallback = await fallbackScrape(url);
-    if (fallback.length) return res.json({ ok: true, medias: fallback });
-
-    return res.json({ ok: false, error: "Aucun média trouvé." });
+    res.json({ ok: true, medias });
   } catch (e) {
-    return res.json({ ok: false, error: "Erreur serveur : " + e.message });
+    res.json({ ok: false, error: "Erreur : " + e.message });
   }
 });
 
@@ -101,5 +58,5 @@ app.get("/", (req, res) =>
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () =>
-  console.log(`✅ Downloader opérationnel sur port ${PORT}`)
+  console.log(`✅ Downloader via proxy opérationnel sur port ${PORT}`)
 );
