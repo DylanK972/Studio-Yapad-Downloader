@@ -1,7 +1,8 @@
 {
   "name": "studio-yapad-downloader",
-  "version": "1.0.0",
-  "description": "Studio Yapad Downloader API-free Instagram & TikTok Downloader",
+  "version": "10.0.0",
+  "description": "Free all-in-one Instagram & TikTok downloader",
+  "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
