@@ -15,12 +15,13 @@ const __dirname = path.dirname(__filename);
 app.use(express.static(__dirname));
 
 async function getInstagramMedia(url) {
+  const proxy = `https://r.jina.ai/http://${url.replace("https://", "")}`; // contournement Render
   const headers = {
     "User-Agent":
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
   };
 
-  const res = await fetch(url, { headers });
+  const res = await fetch(proxy, { headers });
   const html = await res.text();
 
   const dom = new JSDOM(html);
