@@ -1,6 +1,6 @@
-// Studio Yapad Downloader — version finale Render-compatible
+// Studio Yapad Downloader – version stable Render
 async function download(platform) {
-  const input = document.getElementById(platform);
+  const input = document.getElementById(platform === "instagram" ? "insta" : "tiktok");
   const url = input.value.trim();
   const result = document.getElementById(`${platform}-result`);
   result.innerHTML = "";
@@ -11,9 +11,7 @@ async function download(platform) {
   }
 
   try {
-    // 🌍 Appel à ton backend Render
-    const backendURL = `/api/${platform}?url=${encodeURIComponent(url)}`;
-    const res = await fetch(backendURL);
+    const res = await fetch(`/api/${platform}?url=${encodeURIComponent(url)}`);
     const data = await res.json();
 
     if (!data.ok) {
@@ -21,17 +19,15 @@ async function download(platform) {
       return;
     }
 
-    // ✅ Affiche les médias trouvés
     data.medias.forEach((media) => {
-      const ext = media.includes(".mp4") ? "vidéo" : "photo";
-      const el =
-        ext === "vidéo"
-          ? `<video controls width="100%" src="${media}"></video>`
-          : `<img src="${media}" alt="média" style="width:100%;border-radius:10px;">`;
+      const isVideo = media.endsWith(".mp4");
+      const content = isVideo
+        ? `<video controls width="100%" src="${media}"></video>`
+        : `<img src="${media}" alt="média" style="width:100%;border-radius:10px;">`;
 
       result.innerHTML += `
         <div style="margin-top:15px;">
-          ${el}
+          ${content}
           <a href="${media}" download target="_blank" style="
             display:inline-block;
             margin-top:10px;
