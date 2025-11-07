@@ -1,73 +1,105 @@
-// 🎬 Studio Yapad Downloader – Script principal
+document.addEventListener("DOMContentLoaded", () => {
+  const form = document.querySelector("form");
+  const input = document.querySelector("input");
+  const button = document.querySelector("button");
+  const msg = document.createElement("p");
+  msg.style.marginTop = "10px";
+  msg.style.fontWeight = "500";
+  msg.style.textAlign = "center";
+  form.appendChild(msg);
 
-async function download(platform) {
-  const input = document.getElementById(platform);
-  const resultDiv = document.getElementById(`${platform}-result`);
-  const url = input.value.trim();
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const url = input.value.trim();
+    msg.textContent = "";
+    msg.style.color = "#666";
+    msg.textContent = "⏳ Téléchargement en cours...";
 
-  resultDiv.innerHTML = "";
-
-  if (!url) {
-    resultDiv.innerHTML = `<p style="color:#c00;">⚠️ Merci de coller un lien valide.</p>`;
-    return;
-  }
-
-  // Détecte automatiquement la plateforme
-  let endpoint = "";
-  if (url.includes("tiktok.com")) endpoint = "/api/tiktok";
-  else if (url.includes("instagram.com")) endpoint = "/api/instagram";
-  else {
-    resultDiv.innerHTML = `<p style="color:#c00;">❌ Plateforme non reconnue.</p>`;
-    return;
-  }
-
-  // Spinner temporaire
-  resultDiv.innerHTML = `<p>⏳ Récupération du média...</p>`;
-
-  try {
-    const response = await fetch(`${endpoint}?url=${encodeURIComponent(url)}`);
-    const data = await response.json();
-
-    if (data.error) {
-      resultDiv.innerHTML = `<p style="color:#c00;">⚠️ ${data.error}</p>`;
+    if (!url) {
+      msg.style.color = "red";
+      msg.textContent = "⚠️ Merci d’entrer une URL.";
       return;
     }
 
-    // 🔹 Si un lien est trouvé
-    if (data.media) {
-      const link = data.media;
-      const isVideo = link.includes(".mp4");
-      const isImage = link.match(/\.(jpg|jpeg|png)/i);
+    try {
+      // Detect Instagram or TikTok
+      const isInsta = url.includes("instagram.com");
+      const isTiktok = url.includes("tiktok.com");
 
-      let preview = "";
-      if (isVideo) {
-        preview = `
-          <video controls width="100%" style="border-radius:10px;margin-top:10px;">
-            <source src="${link}" type="video/mp4">
-            Votre navigateur ne supporte pas la vidéo.
-          </video>`;
-      } else if (isImage) {
-        preview = `<img src="${link}" alt="aperçu" style="width:100%;border-radius:10px;margin-top:10px;">`;
+      if (!isInsta && !isTiktok) {
+        msg.style.color = "red";
+        msg.textContent = "⚠️ Lien non supporté.";
+        return;
       }
 
-      resultDiv.innerHTML = `
-        ${preview}
-        <a href="${link}" target="_blank" download style="
-          display:inline-block;
-          margin-top:15px;
-          padding:10px 20px;
-          background:linear-gradient(90deg,#8b5cf6,#6a0dad);
-          color:white;
-          border-radius:10px;
-          font-weight:600;
-          text-decoration:none;
-        ">⬇️ Télécharger</a>
-      `;
-    } else {
-      resultDiv.innerHTML = `<p style="color:#c00;">⚠️ Aucun média détecté (toutes les sources ont échoué).</p>`;
+      const endpoint = isInsta ? "/api/instagram" : "/api/tiktok";
+      const res = await fetch(`${endpoint}?url=${encodeURIComponent(url)}`);
+      const data = await res.json();
+
+      if (!data.ok || !data.medias || !data.medias.length) {
+        msg.style.color = "red";
+        msg.textContent = data.error || "⚠️ Aucun média détecté.";
+        return;
+      }
+
+      msg.style.color = "#2ecc71";
+      msg.textContent = `✅ ${data.count} média${data.count > 1 ? "s" : ""} trouvé${
+        data.count > 1 ? "s" : ""
+      }.`;
+
+      // Clean old previews
+      const old = document.querySelector(".results");
+      if (old) old.remove();
+
+      const container = document.createElement("div");
+      container.className = "results";
+      container.style.display = "grid";
+      container.style.gridTemplateColumns = "repeat(auto-fit, minmax(200px, 1fr))";
+      container.style.gap = "10px";
+      container.style.marginTop = "20px";
+
+      data.medias.forEach((m) => {
+        const card = document.createElement("div");
+        card.style.textAlign = "center";
+        card.style.background = "#fafafa";
+        card.style.padding = "10px";
+        card.style.borderRadius = "10px";
+        card.style.boxShadow = "0 0 5px rgba(0,0,0,0.1)";
+
+        if (m.endsWith(".mp4")) {
+          const video = document.createElement("video");
+          video.src = m;
+          video.controls = true;
+          video.style.width = "100%";
+          card.appendChild(video);
+        } else {
+          const img = document.createElement("img");
+          img.src = m;
+          img.alt = "media";
+          img.style.width = "100%";
+          img.style.borderRadius = "8px";
+          card.appendChild(img);
+        }
+
+        const link = document.createElement("a");
+        link.href = m;
+        link.download = "";
+        link.textContent = "⬇️ Télécharger";
+        link.style.display = "block";
+        link.style.marginTop = "8px";
+        link.style.color = "#6c3ef2";
+        link.style.textDecoration = "none";
+        link.style.fontWeight = "600";
+        card.appendChild(link);
+
+        container.appendChild(card);
+      });
+
+      form.insertAdjacentElement("afterend", container);
+    } catch (err) {
+      console.error(err);
+      msg.style.color = "red";
+      msg.textContent = "❌ Erreur : " + err.message;
     }
-  } catch (err) {
-    console.error(err);
-    resultDiv.innerHTML = `<p style="color:#c00;">❌ Erreur inattendue : ${err.message}</p>`;
-  }
-}
+  });
+});
