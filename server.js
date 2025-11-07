@@ -3,6 +3,7 @@ import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
 import fetch from "node-fetch";
+import { JSDOM } from "jsdom";
 
 const app = express();
 app.use(cors());
@@ -13,79 +14,60 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 app.use(express.static(__dirname));
 
-/** 🔥 Proxy vers SSSInstagram */
-async function proxyToSSSInstagram(instaUrl) {
-  const endpoint = "https://sssinstagram.com/api/convert";
+/** Proxy universel via AllOrigins */
+async function getThroughProxy(targetUrl) {
+  const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+  const r = await fetch(proxy);
+  const data = await r.json();
+  return data.contents;
+}
 
-  const headers = {
-    "Content-Type": "application/json",
-    "Origin": "https://sssinstagram.com",
-    "Referer": "https://sssinstagram.com/",
-    "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-  };
-
-  const body = JSON.stringify({ url: instaUrl });
-
+/** Essaie de récupérer la page Instagram directement */
+async function getInstagramHTML(instaUrl) {
   try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers,
-      body,
-    });
-
-    const contentType = response.headers.get("content-type") || "";
-    if (!contentType.includes("application/json")) {
-      const text = await response.text();
-      throw new Error(`Réponse non JSON : ${text.slice(0, 200)}...`);
-    }
-
-    const data = await response.json();
-
-    // Analyse du JSON retourné
-    // Exemple de structure : { url: "...", links: [ {url: "..."} ], medias: [...] }
-    const medias = [];
-
-    if (Array.isArray(data.links)) {
-      data.links.forEach((l) => {
-        if (l.url && (l.url.includes("cdninstagram") || l.url.endsWith(".mp4")))
-          medias.push(l.url);
-      });
-    }
-    if (data.url) medias.push(data.url);
-    if (data.src) medias.push(data.src);
-    if (data.downloadUrl) medias.push(data.downloadUrl);
-
-    return medias;
-  } catch (err) {
-    console.error("Erreur SSSInstagram:", err.message);
-    return [];
+    const html = await getThroughProxy(instaUrl);
+    return html;
+  } catch (e) {
+    console.error("Erreur AllOrigins:", e.message);
+    return null;
   }
 }
 
-/** Route principale : /api/instagram */
+/** Analyse HTML Instagram pour trouver les liens OG:image / OG:video */
+function extractMedias(html) {
+  const dom = new JSDOM(html);
+  const metas = dom.window.document.querySelectorAll("meta[property]");
+  const medias = [];
+  metas.forEach((m) => {
+    const prop = m.getAttribute("property");
+    const content = m.getAttribute("content");
+    if (prop === "og:image" || prop === "og:video") medias.push(content);
+  });
+  return medias;
+}
+
+/** API principale */
 app.get("/api/instagram", async (req, res) => {
   const { url } = req.query;
   if (!url) return res.json({ ok: false, error: "Aucune URL fournie." });
 
   try {
-    const medias = await proxyToSSSInstagram(url);
+    const html = await getInstagramHTML(url);
+    if (!html) return res.json({ ok: false, error: "Impossible de récupérer la page." });
 
+    const medias = extractMedias(html);
     if (!medias.length)
-      return res.json({ ok: false, error: "Aucun média trouvé sur SSSInstagram." });
+      return res.json({ ok: false, error: "Aucun média trouvé." });
 
     return res.json({ ok: true, medias });
-  } catch (err) {
-    return res.json({ ok: false, error: "Erreur serveur : " + err.message });
+  } catch (e) {
+    return res.json({ ok: false, error: "Erreur serveur : " + e.message });
   }
 });
 
-app.get("/", (req, res) =>
-  res.sendFile(path.join(__dirname, "index.html"))
-);
+app.get("/", (req, res) => res.sendFile(path.join(__dirname, "index.html")));
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () =>
-  console.log(`✅ Downloader SSSInstagram opérationnel sur port ${PORT}`)
+  console.log(`✅ Downloader via AllOrigins actif sur port ${PORT}`)
 );
