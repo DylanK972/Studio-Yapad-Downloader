@@ -1,132 +1,110 @@
+// script.js (front)
 document.addEventListener("DOMContentLoaded", () => {
-  const form = document.querySelector("form");
-  const input = document.querySelector("input");
-  const button = document.querySelector("button");
+  // adapt selectors to your HTML
+  const instaInput = document.querySelector("#insta") || document.querySelector("#instaInput") || document.querySelector("input[placeholder*='instagram']");
+  const tiktokInput = document.querySelector("#tiktok");
+  const instaBtn = document.querySelector("button[onclick*='insta']") || document.querySelector("#instaBtn");
+  const tiktokBtn = document.querySelector("button[onclick*='tiktok']") || document.querySelector("#tiktokBtn");
 
-  const msg = document.createElement("p");
-  msg.style.marginTop = "12px";
-  msg.style.textAlign = "center";
-  msg.style.fontWeight = "500";
-  form.appendChild(msg);
+  // create a results area if none exists
+  let resultsArea = document.querySelector("#insta-result");
+  if (!resultsArea) {
+    resultsArea = document.createElement("div");
+    resultsArea.id = "insta-result";
+    if (instaBtn && instaBtn.parentNode) instaBtn.parentNode.appendChild(resultsArea);
+  }
 
-  let isLoading = false;
+  const setMessage = (msg, danger = false) => {
+    resultsArea.innerHTML = `<p style="color:${danger ? "crimson" : "#333"}">${msg}</p>`;
+  };
 
-  async function handleDownload(e) {
-    e.preventDefault();
-    if (isLoading) return;
-    isLoading = true;
-
-    const url = input.value.trim();
-    msg.textContent = "";
-    msg.style.color = "#555";
-
-    if (!url) {
-      msg.style.color = "red";
-      msg.textContent = "⚠️ Merci d’entrer une URL.";
-      isLoading = false;
-      return;
-    }
-
-    msg.innerHTML = "⏳ Récupération des médias...";
-    button.disabled = true;
-    button.style.opacity = 0.6;
-
-    const endpoint = url.includes("tiktok.com")
-      ? "/api/tiktok"
-      : "/api/instagram";
-
+  const fetchInstagram = async (url) => {
     try {
-      let response = await fetch(`${endpoint}?url=${encodeURIComponent(url)}`);
-      if (!response.ok) throw new Error("Erreur serveur " + response.status);
-      let data = await response.json();
-
-      // Retry automatique si premier essai vide
-      if ((!data.ok || !data.medias?.length) && !window._retry) {
-        window._retry = true;
-        console.log("🔁 Retry automatique...");
-        response = await fetch(`${endpoint}?url=${encodeURIComponent(url)}`);
-        data = await response.json();
-      }
-
-      window._retry = false;
-
-      if (!data.ok || !data.medias || !data.medias.length) {
-        msg.style.color = "red";
-        msg.innerHTML = data.error || "⚠️ Aucun média trouvé.";
-        button.disabled = false;
-        button.style.opacity = 1;
-        isLoading = false;
+      setMessage("Recherche des médias…");
+      const res = await fetch(`/api/instagram?url=${encodeURIComponent(url)}`);
+      const json = await res.json();
+      if (!json.ok || !json.medias || json.count === 0) {
+        const message = json.message || json.error || "Aucun média trouvé ou format inattendu.";
+        setMessage("⚠️ " + message, true);
         return;
       }
 
-      msg.style.color = "#27ae60";
-      msg.innerHTML = `✅ ${data.count || data.medias.length} média${
-        data.medias.length > 1 ? "s" : ""
-      } trouvé${data.medias.length > 1 ? "s" : ""}.`;
+      // show results
+      resultsArea.innerHTML = "";
+      json.medias.forEach((m, i) => {
+        const wrap = document.createElement("div");
+        wrap.className = "media-row";
+        wrap.style = "margin:10px 0; display:flex; gap:12px; align-items:center;";
 
-      const old = document.querySelector(".results");
-      if (old) old.remove();
-
-      const container = document.createElement("div");
-      container.className = "results";
-      container.style.display = "grid";
-      container.style.gridTemplateColumns = "repeat(auto-fit,minmax(220px,1fr))";
-      container.style.gap = "12px";
-      container.style.marginTop = "20px";
-
-      data.medias.forEach((m) => {
-        const card = document.createElement("div");
-        card.style.background = "#fff";
-        card.style.borderRadius = "10px";
-        card.style.padding = "10px";
-        card.style.boxShadow = "0 0 6px rgba(0,0,0,0.1)";
-        card.style.textAlign = "center";
-        card.style.transition = "transform 0.2s";
-        card.onmouseenter = () => (card.style.transform = "scale(1.02)");
-        card.onmouseleave = () => (card.style.transform = "scale(1)");
-
-        if (m.includes(".mp4")) {
-          const video = document.createElement("video");
-          video.src = m;
-          video.controls = true;
-          video.style.width = "100%";
-          video.style.borderRadius = "8px";
-          card.appendChild(video);
+        // thumb (if image)
+        const thumb = document.createElement("img");
+        thumb.src = m;
+        thumb.style = "width:120px; height:auto; object-fit:cover; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,0.08)";
+        // if url is video (mp4) try to use video element
+        if (m.match(/\.mp4|video/)) {
+          const v = document.createElement("video");
+          v.src = m;
+          v.muted = true;
+          v.controls = false;
+          v.style = "width:120px; border-radius:8px; background:#000";
+          v.onmouseover = () => v.play();
+          v.onmouseout = () => v.pause();
+          wrap.appendChild(v);
         } else {
-          const img = document.createElement("img");
-          img.src = m;
-          img.alt = "media";
-          img.style.width = "100%";
-          img.style.borderRadius = "8px";
-          card.appendChild(img);
+          wrap.appendChild(thumb);
         }
 
-        const link = document.createElement("a");
-        link.href = m;
-        link.download = "";
-        link.textContent = "⬇️ Télécharger";
-        link.target = "_blank";
-        link.style.display = "inline-block";
-        link.style.marginTop = "8px";
-        link.style.color = "#6c3ef2";
-        link.style.fontWeight = "600";
-        link.style.textDecoration = "none";
-        card.appendChild(link);
+        // info and actions
+        const info = document.createElement("div");
+        info.style = "flex:1";
 
-        container.appendChild(card);
+        const urlP = document.createElement("div");
+        urlP.textContent = m;
+        urlP.style = "font-size:12px; color:#555; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:420px";
+
+        // direct proxy download button
+        const proxyUrl = `/proxy?url=${encodeURIComponent(m)}&name=post_${i + 1}`;
+        const dl = document.createElement("a");
+        dl.href = proxyUrl;
+        dl.target = "_blank";
+        dl.rel = "noopener";
+        dl.textContent = "⬇️ Télécharger";
+        dl.style =
+          "display:inline-block; margin-top:8px; padding:10px 14px; background:linear-gradient(90deg,#8b5cf6,#6a0dad); color:white; border-radius:10px; text-decoration:none; font-weight:600";
+
+        // copy link button
+        const copyBtn = document.createElement("button");
+        copyBtn.textContent = "Copier lien";
+        copyBtn.style = "margin-left:10px; padding:8px 10px; border-radius:8px";
+        copyBtn.onclick = () => {
+          navigator.clipboard?.writeText(m).then(() => alert("Lien copié"));
+        };
+
+        info.appendChild(urlP);
+        info.appendChild(dl);
+        info.appendChild(copyBtn);
+
+        wrap.appendChild(info);
+        resultsArea.appendChild(wrap);
       });
-
-      form.insertAdjacentElement("afterend", container);
     } catch (err) {
-      console.error("Erreur front:", err);
-      msg.style.color = "red";
-      msg.textContent = "❌ Erreur : " + err.message;
+      setMessage("⚠️ Erreur : " + err.message, true);
     }
+  };
 
-    button.disabled = false;
-    button.style.opacity = 1;
-    isLoading = false;
+  // hook buttons (if available)
+  if (instaBtn && instaInput) {
+    instaBtn.addEventListener("click", () => {
+      const url = instaInput.value.trim();
+      if (!url) return setMessage("Colle un lien Instagram !");
+      fetchInstagram(url);
+    });
+  } else if (instaInput) {
+    // allow Enter
+    instaInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        fetchInstagram(instaInput.value.trim());
+      }
+    });
   }
-
-  form.addEventListener("submit", handleDownload);
 });
